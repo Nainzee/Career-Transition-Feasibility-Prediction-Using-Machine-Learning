@@ -1,121 +1,191 @@
-# ==============================
-# Career Transition Predictor
-# Academic Final Version
-# ==============================
+# =====================================================
+# Career Transition AI (Resume-Level Version)
+# =====================================================
 
+import streamlit as st
 import pandas as pd
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+import re
 
-# ------------------------------
-# 1. Load Dataset
-# ------------------------------
-df = pd.read_csv("data/candidate_job_role_dataset.csv")
-
-# Expecting columns:
-# skills, job_role
-
-# ------------------------------
-# 2. Preprocess Skills
-# ------------------------------
-df["skills"] = df["skills"].str.lower().str.split(",")
-
-mlb = MultiLabelBinarizer()
-X = mlb.fit_transform(df["skills"])
-y = df["job_role"]
-
-# ------------------------------
-# 3. Train Model
-# ------------------------------
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
+# -------------------------
+# Page Config
+# -------------------------
+st.set_page_config(
+    page_title="Career Transition AI",
+    page_icon="🚀",
+    layout="wide"
 )
 
-model = RandomForestClassifier(n_estimators=150, random_state=42)
-model.fit(X_train, y_train)
+st.title("🚀 Career Transition AI")
+st.caption("AI-powered career feasibility & skill gap analysis")
 
-print("Model trained successfully!")
+# -------------------------
+# Load Data
+# -------------------------
+@st.cache_data
+def load_data():
+    df = pd.read_csv("data/candidate_job_role_dataset.csv")
+    df["skills"] = df["skills"].str.lower().str.split(",")
+    return df
 
-# ------------------------------
-# 4. USER INPUT
-# ------------------------------
-print("\n====== Career Transition Predictor ======")
-current_role = input("Enter your CURRENT role: ")
-target_role = input("Enter your TARGET role: ")
-user_skills = input("Enter your skills (comma separated): ").lower().split(",")
+df = load_data()
 
-# Clean spaces
-user_skills = [s.strip() for s in user_skills]
+# -------------------------
+# Train Model
+# -------------------------
+@st.cache_resource
+def train_model(df):
+    mlb = MultiLabelBinarizer()
+    X = mlb.fit_transform(df["skills"])
+    y = df["job_role"]
 
-# ------------------------------
-# 5. Predict Role Match
-# ------------------------------
-user_vector = mlb.transform([user_skills])
-predicted_role = model.predict(user_vector)[0]
+    model = RandomForestClassifier(n_estimators=200, random_state=42)
+    model.fit(X, y)
+    return model, mlb
 
-# Probability for target role
-probs = model.predict_proba(user_vector)[0]
-classes = model.classes_
+model, mlb = train_model(df)
 
-if target_role in classes:
-    feasibility_score = int(probs[list(classes).index(target_role)] * 100)
-else:
-    feasibility_score = 0
+# -------------------------
+# Sidebar Inputs
+# -------------------------
+st.sidebar.header("🧑‍💻 Your Profile")
 
-# ------------------------------
-# 6. Skill Gap Analysis
-# ------------------------------
-# Get skills required by target role from dataset
-target_rows = df[df["job_role"] == target_role]
+current_role = st.sidebar.text_input("Current Role")
+target_role = st.sidebar.text_input("Target Role")
 
-if len(target_rows) > 0:
-    required_skills = set(sum(target_rows["skills"].tolist(), []))
-else:
-    required_skills = set()
+skills_input = st.sidebar.text_area(
+    "Enter Skills (comma separated)",
+    placeholder="python, sql, statistics"
+)
 
-user_skill_set = set(user_skills)
+resume = st.sidebar.file_uploader("📄 Upload Resume (optional)", type=["txt"])
 
-matched = user_skill_set & required_skills
-missing = required_skills - user_skill_set
-partial = set()  # simplified version
+# -------------------------
+# Resume Skill Extraction
+# -------------------------
+def extract_skills_from_text(text, known_skills):
+    text = text.lower()
+    found = []
+    for skill in known_skills:
+        if re.search(rf"\b{skill}\b", text):
+            found.append(skill)
+    return found
 
-# ------------------------------
-# 7. Effort Estimation
-# ------------------------------
-missing_count = len(missing)
+if resume:
+    text = resume.read().decode("utf-8")
+    all_skills = list(set(sum(df["skills"], [])))
+    extracted = extract_skills_from_text(text, all_skills)
+    if extracted:
+        st.sidebar.success(f"Detected Skills: {', '.join(extracted)}")
+        skills_input = ", ".join(extracted)
 
-if missing_count <= 2:
-    effort = "Low (1–2 months)"
-elif missing_count <= 5:
-    effort = "Medium (3–6 months)"
-else:
-    effort = "High (6–12 months)"
+# -------------------------
+# Predict Button
+# -------------------------
+if st.sidebar.button("🚀 Analyze Transition"):
 
-# ------------------------------
-# 8. Final Output
-# ------------------------------
-print("\n========== RESULTS ==========")
-print(f"Current Role: {current_role}")
-print(f"Target Role: {target_role}")
+    if not target_role or not skills_input:
+        st.warning("Please provide target role and skills")
+        st.stop()
 
-print(f"\nFeasibility Score: {feasibility_score}/100")
+    user_skills = [s.strip().lower() for s in skills_input.split(",")]
+    user_vector = mlb.transform([user_skills])
 
-print("\nMatched Skills:")
-for s in matched:
-    print(f"✔ {s}")
+    probs = model.predict_proba(user_vector)[0]
+    classes = model.classes_
 
-print("\nMissing Skills:")
-for s in missing:
-    print(f"✘ {s}")
+    if target_role in classes:
+        feasibility_score = int(probs[list(classes).index(target_role)] * 100)
+    else:
+        feasibility_score = 0
 
-print(f"\nEstimated Learning Effort: {effort}")
+    # -------------------------
+    # Skill Gap Analysis
+    # -------------------------
+    target_rows = df[df["job_role"] == target_role]
 
-# Explainability
-print("\nKey Factors:")
-if feasibility_score > 60:
-    print("- Strong skill overlap")
-else:
-    print("- Significant skill gaps detected")
+    if len(target_rows) > 0:
+        required_skills = set(sum(target_rows["skills"].tolist(), []))
+    else:
+        required_skills = set()
 
-print("\n=============================")
+    user_skill_set = set(user_skills)
+    matched = user_skill_set & required_skills
+    missing = required_skills - user_skill_set
+
+    # -------------------------
+    # Effort Estimation
+    # -------------------------
+    missing_count = len(missing)
+
+    if missing_count <= 2:
+        effort = "🟢 Low (1–2 months)"
+    elif missing_count <= 5:
+        effort = "🟡 Medium (3–6 months)"
+    else:
+        effort = "🔴 High (6–12 months)"
+
+    # =========================
+    # MAIN DASHBOARD
+    # =========================
+    st.subheader("📊 Transition Dashboard")
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("🎯 Feasibility Score", f"{feasibility_score}/100")
+    col2.metric("✅ Matched Skills", len(matched))
+    col3.metric("❌ Missing Skills", len(missing))
+
+    st.progress(feasibility_score / 100)
+
+    # -------------------------
+    # Skills Columns
+    # -------------------------
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.markdown("### ✅ You Already Have")
+        for s in sorted(matched):
+            st.success(s)
+
+    with c2:
+        st.markdown("### 🎯 Skills to Learn")
+        for s in sorted(missing):
+            st.error(s)
+
+    st.info(f"⏱ Estimated Effort: {effort}")
+
+    # -------------------------
+    # Recommendations
+    # -------------------------
+    st.markdown("### 🧠 AI Recommendations")
+
+    if feasibility_score > 70:
+        st.success("Strong transition potential. Start building projects and applying.")
+    elif feasibility_score > 40:
+        st.warning("Moderate feasibility. Focus on closing top skill gaps.")
+    else:
+        st.error("Low feasibility. Consider stepping-stone roles first.")
+
+    # -------------------------
+    # Alternative Roles
+    # -------------------------
+    st.markdown("### 🔄 Suggested Alternative Roles")
+
+    similarity_scores = dict(zip(classes, probs))
+    top_roles = sorted(similarity_scores.items(), key=lambda x: x[1], reverse=True)[1:4]
+
+    for role, score in top_roles:
+        st.write(f"➡ {role} ({int(score*100)}% match)")
+
+    # -------------------------
+    # Learning Roadmap
+    # -------------------------
+    if missing:
+        st.markdown("### 📚 Suggested Learning Roadmap")
+        for i, skill in enumerate(list(missing)[:5], 1):
+            st.write(f"{i}. Learn {skill} → Build 1 project")
+
+st.markdown("---")
+st.caption("Built with ❤️ using Machine Learning • Portfolio Ready")
